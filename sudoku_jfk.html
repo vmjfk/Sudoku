@@ -24,6 +24,7 @@
     --same-num: #394a63;
     --app-max-width: 560px;
     --board-size: min(94vw, 94vh - 210px, 520px);
+    --cell-font-scale: 1;
   }
   /* Scale everything up on bigger screens (iPad Pro, landscape, external display) */
   @media (min-width: 700px) {
@@ -47,10 +48,11 @@
   }
   #app {
     display: flex; flex-direction: column; align-items: center;
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     justify-content: flex-start;
+    overflow: hidden;
   }
   header {
     width: 100%; max-width: var(--app-max-width);
@@ -68,25 +70,25 @@
     padding: 0 16px 10px; font-size: 15px; color: #a0a0a5;
   }
   #board-wrap {
-    width: 100%; max-width: var(--app-max-width); padding: 0 12px;
-    display: flex; flex-direction: column; align-items: center;
+    width: 100%; max-width: var(--app-max-width); padding: 4px 12px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    flex: 1 1 auto; min-height: 0;
   }
   #board {
     display: grid;
     grid-template-columns: repeat(9, 1fr);
     grid-template-rows: repeat(9, 1fr);
-    width: var(--board-size);
-    height: var(--board-size);
     background: var(--thick-line);
     gap: 1px;
     border: 2px solid var(--thick-line);
     border-radius: 6px;
     overflow: hidden;
+    flex-shrink: 0;
   }
   .cell {
     background: var(--cell-bg);
     display: flex; align-items: center; justify-content: center;
-    font-size: clamp(16px, 4.2vw, 26px);
+    font-size: calc(clamp(16px, 4.2vw, 26px) * var(--cell-font-scale));
     font-weight: 400;
     color: var(--user);
     position: relative;
@@ -106,7 +108,8 @@
     pointer-events: none;
   }
   .notes span {
-    font-size: clamp(7px, 1.6vw, 10px); color: #9a9aa0;
+    font-size: calc(clamp(7px, 1.6vw, 10px) * var(--cell-font-scale));
+    color: #9a9aa0;
     display: flex; align-items: center; justify-content: center;
   }
   .cell.selected .notes span { color: #e0e0e0; }
@@ -137,6 +140,7 @@
     width: 100%; max-width: 400px; padding: 40px 20px;
     display: flex; flex-direction: column; align-items: center; gap: 16px;
     text-align: center;
+    overflow-y: auto; max-height: 100%;
   }
   #difficulty-screen h1 { font-size: 28px; margin-bottom: 4px; }
   #difficulty-screen p { color: #a0a0a5; margin-top: 0; margin-bottom: 20px; }
@@ -180,6 +184,15 @@
   .setting-row input[type="checkbox"] {
     width: 20px; height: 20px; accent-color: var(--accent);
   }
+  .setting-row input[type="range"] {
+    width: 120px; accent-color: var(--accent);
+  }
+  #version-tag {
+    font-size: 11px; color: #5a5a5f; margin-top: 4px;
+  }
+  #version-tag-game {
+    font-size: 11px; color: #5a5a5f; text-align: center; padding-bottom: 10px;
+  }
 </style>
 </head>
 <body>
@@ -196,11 +209,13 @@
       <label class="setting-row"><span>Highlight mistakes in red</span><input type="checkbox" id="opt-mistakes" checked></label>
       <label class="setting-row"><span>Highlight matching numbers</span><input type="checkbox" id="opt-samevalue" checked></label>
       <label class="setting-row"><span>Highlight row / column / box</span><input type="checkbox" id="opt-peer" checked></label>
+      <label class="setting-row"><span>Number size</span><input type="range" id="opt-fontsize" min="0.8" max="1.6" step="0.1" value="1"></label>
     </div>
     <div id="install-tip">Tip: tap the Share icon in Safari, then "Add to Home Screen" to install this as an app icon — works fully offline.</div>
+    <div id="version-tag"></div>
   </div>
 
-  <div id="game-screen" class="hidden" style="width:100%; display:flex; flex-direction:column; align-items:center;">
+  <div id="game-screen" class="hidden" style="width:100%; display:flex; flex-direction:column; align-items:center; flex:1; min-height:0;">
     <header>
       <button class="icon-btn" id="btn-menu">Menu</button>
       <h1 id="diff-label">Sudoku</h1>
@@ -232,6 +247,7 @@
         Hint
       </button>
     </div>
+    <div id="version-tag-game"></div>
   </div>
 
 </div>
@@ -249,6 +265,7 @@
   "use strict";
 
   const DIFFICULTY_CLUES = { easy: 36, medium: 30, hard: 26, challenging: 22 };
+  const APP_VERSION = 'v1.1'; // bump this on every change so both screens stay in sync
 
   let solution = [];
   let puzzle = [];
@@ -287,6 +304,63 @@
       for (let c = 0; c < 3; c++)
         if (grid[br+r][bc+c] === num) return false;
     return true;
+  }
+
+  // Checks whether placing `num` at (row,col) conflicts with anything already
+  // in that row/column/box, ignoring the cell itself. Used for live rule
+  // checking (mistake highlighting), as opposed to isValid() above which is
+  // only used during puzzle generation.
+  function hasConflictAt(grid, row, col, num) {
+    for (let i = 0; i < 9; i++) {
+      if (i !== col && grid[row][i] === num) return true;
+      if (i !== row && grid[i][col] === num) return true;
+    }
+    const br = row - row % 3, bc = col - col % 3;
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const rr = br + r, cc = bc + c;
+        if ((rr !== row || cc !== col) && grid[rr][cc] === num) return true;
+      }
+    }
+    return false;
+  }
+
+  // Returns a 9x9 boolean grid: true where that cell's value duplicates
+  // another value in its row, column, or box. This is a pure Sudoku-rules
+  // check on the current board state — it never references the generator's
+  // stored solution, so it's correct even in the (should-be-impossible-but-
+  // just-in-case) event a puzzle allows more than one valid completion.
+  function computeConflicts(grid) {
+    const conflicts = Array.from({length:9}, () => Array(9).fill(false));
+
+    function markDupes(cells) {
+      const seen = {};
+      for (const [r,c] of cells) {
+        const v = grid[r][c];
+        if (v === 0) continue;
+        (seen[v] = seen[v] || []).push([r,c]);
+      }
+      for (const key in seen) {
+        if (seen[key].length > 1) seen[key].forEach(([r,c]) => conflicts[r][c] = true);
+      }
+    }
+
+    for (let r = 0; r < 9; r++) {
+      markDupes(Array.from({length:9}, (_,c) => [r,c]));
+    }
+    for (let c = 0; c < 9; c++) {
+      markDupes(Array.from({length:9}, (_,r) => [r,c]));
+    }
+    for (let br = 0; br < 3; br++) {
+      for (let bc = 0; bc < 3; bc++) {
+        const cells = [];
+        for (let r = br*3; r < br*3+3; r++)
+          for (let c = bc*3; c < bc*3+3; c++)
+            cells.push([r,c]);
+        markDupes(cells);
+      }
+    }
+    return conflicts;
   }
 
   function fillGrid(grid) {
@@ -384,6 +458,7 @@
 
   function renderBoard() {
     const cellEls = boardEl.children;
+    const conflicts = settings.showMistakes ? computeConflicts(userGrid) : null;
     for (let r = 0; r < 9; r++) {
       for (let c = 0; c < 9; c++) {
         const idx = r*9+c;
@@ -396,7 +471,7 @@
           el.textContent = val;
         } else if (val !== 0) {
           el.textContent = val;
-          if (settings.showMistakes && val !== solution[r][c]) el.classList.add('error');
+          if (settings.showMistakes && conflicts[r][c]) el.classList.add('error');
         } else {
           const noteWrap = document.createElement('div');
           noteWrap.className = 'notes';
@@ -457,7 +532,7 @@
       pushHistory(r, c, userGrid[r][c], notesGrid[r][c]);
       userGrid[r][c] = n;
       notesGrid[r][c] = new Set();
-      if (n !== solution[r][c]) {
+      if (hasConflictAt(userGrid, r, c, n)) {
         mistakes++;
         document.getElementById('mistakes').textContent = 'Mistakes: ' + mistakes;
       }
@@ -504,9 +579,19 @@
   }
 
   function checkWin() {
+    // Fully rules-based: every cell filled, and no duplicate in any row,
+    // column, or box. This never references the generator's stored
+    // solution, so any legitimately valid completion counts as a win —
+    // not just the one specific grid the puzzle happened to be built from.
     for (let r = 0; r < 9; r++)
       for (let c = 0; c < 9; c++)
-        if (userGrid[r][c] !== solution[r][c]) return;
+        if (userGrid[r][c] === 0) return;
+
+    const conflicts = computeConflicts(userGrid);
+    for (let r = 0; r < 9; r++)
+      for (let c = 0; c < 9; c++)
+        if (conflicts[r][c]) return;
+
     clearInterval(timerInterval);
     document.getElementById('win-time').textContent = 'Time: ' + formatTime(seconds) + ' — Mistakes: ' + mistakes;
     document.getElementById('win-overlay').classList.remove('hidden');
@@ -563,6 +648,9 @@
       showLoadingThenStart(btn.dataset.diff);
     });
   });
+
+  document.getElementById('version-tag').textContent = APP_VERSION;
+  document.getElementById('version-tag-game').textContent = APP_VERSION;
 
   document.getElementById('opt-mistakes').addEventListener('change', function() {
     settings.showMistakes = this.checked;
