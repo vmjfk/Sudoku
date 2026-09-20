@@ -265,7 +265,7 @@
   "use strict";
 
   const DIFFICULTY_CLUES = { easy: 36, medium: 30, hard: 26, challenging: 22 };
-  const APP_VERSION = 'v1.1'; // bump this on every change so both screens stay in sync
+  const APP_VERSION = 'v1.3'; // bump this on every change so both screens stay in sync
 
   let solution = [];
   let puzzle = [];
@@ -432,6 +432,42 @@
   // ---------- Rendering ----------
   const boardEl = document.getElementById('board');
   const numpadEl = document.getElementById('numpad');
+  const boardWrapEl = document.getElementById('board-wrap');
+  const gameScreenEl = document.getElementById('game-screen');
+  const appEl = document.getElementById('app');
+
+  // Measures the actual rendered space available for the board (accounting
+  // for header/timer row/numpad/controls/version note at their real heights
+  // on this specific device) and sets the board's pixel size to fit exactly.
+  // Deliberately computed from viewport height minus sibling heights rather
+  // than from board-wrap's own clientHeight: board-wrap's height depends on
+  // flexbox growth, which isn't guaranteed to have resolved yet at the point
+  // we measure, and reading it too early was producing a collapsed value.
+  function fitBoard() {
+    if (gameScreenEl.classList.contains('hidden')) return;
+
+    const headerEl = gameScreenEl.querySelector('header');
+    const topRowEl = gameScreenEl.querySelector('.top-row');
+    const controlsEl = document.getElementById('controls');
+    const versionEl = document.getElementById('version-tag-game');
+
+    const appStyle = getComputedStyle(appEl);
+    const safeTop = parseFloat(appStyle.paddingTop) || 0;
+    const safeBottom = parseFloat(appStyle.paddingBottom) || 0;
+
+    const usedHeight = [headerEl, topRowEl, numpadEl, controlsEl, versionEl]
+      .reduce((sum, el) => sum + (el ? el.getBoundingClientRect().height : 0), 0);
+
+    const availableHeight = window.innerHeight - safeTop - safeBottom - usedHeight - 16;
+    const availableWidth = boardWrapEl.clientWidth - 8;
+
+    const size = Math.max(180, Math.floor(Math.min(availableWidth, availableHeight)));
+    boardEl.style.width = size + 'px';
+    boardEl.style.height = size + 'px';
+  }
+
+  window.addEventListener('resize', () => requestAnimationFrame(fitBoard));
+  window.addEventListener('orientationchange', () => setTimeout(fitBoard, 300));
 
   function buildBoardDOM() {
     boardEl.innerHTML = '';
@@ -634,6 +670,7 @@
     buildBoardDOM();
     renderBoard();
     startTimer();
+    requestAnimationFrame(() => requestAnimationFrame(fitBoard));
   }
 
   function backToMenu() {
@@ -663,6 +700,9 @@
   document.getElementById('opt-peer').addEventListener('change', function() {
     settings.showPeer = this.checked;
     if (currentDiff) renderBoard();
+  });
+  document.getElementById('opt-fontsize').addEventListener('input', function() {
+    document.documentElement.style.setProperty('--cell-font-scale', this.value);
   });
 
   function showLoadingThenStart(diff) {
